@@ -178,7 +178,12 @@ function get_external_binding(x, s, S::State)
         return false
     elseif CSTParser.defines_function(x)
         name = CSTParser.str_value(CSTParser.get_name(x))
-        add_binding(x, name, :Function, S, S.loc.offset + x.span)
+        s1 = find_higher_func_decl(name, s)
+        if haskey(s1.names, name) && last(s1.names[name]).t == :Function
+            push!(s1.names[name], Binding(:Function, Location(S.loc.path, S.loc.offset + x.span), x))
+        else
+            add_binding(x, name, :Function, S, S.loc.offset + x.span)
+        end
         return true
     elseif CSTParser.defines_macro(x)
         name = CSTParser.str_value(CSTParser.get_name(x))
@@ -236,6 +241,13 @@ function get_external_binding(x, s, S::State)
         return true
     end
     return false
+end
+
+function find_higher_func_decl(name, s)
+    if !haskey(s.names, name) && s.parent != nothing && s.t != "Module"
+        return find_higher_func_decl(name, s.parent)
+    end
+    return s
 end
 
 function find_ref(name, S::State)
