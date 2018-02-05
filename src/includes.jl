@@ -1,17 +1,3 @@
-function is_joinpathable(x)
-    if x isa CSTParser.EXPR{CSTParser.Call} && x.args[1] isa CSTParser.IDENTIFIER && CSTParser.str_value(x.args[1]) == "joinpath"
-        joinpathable = true
-        for i = 2:length(x.args)
-            arg = x.args[i]
-            if !(arg isa CSTParser.PUNCTUATION)
-                joinpathable &= CSTParser.is_lit_string(arg)
-            end
-        end
-        return joinpathable
-    end
-    return false
-end
-
 function get_path(x::CSTParser.EXPR{CSTParser.Call})
     if length(x.args) == 4
         parg = x.args[3]
@@ -35,17 +21,28 @@ function get_path(x::CSTParser.EXPR{CSTParser.Call})
     return ""
 end
 
+function isincludecall(x)
+    fname = CSTParser.get_name(x)
+    x isa CSTParser.EXPR{CSTParser.Call} && CSTParser.str_value(fname) == "include"
+end
+
+function follow_include(x, s, S)
+    if isincludecall(x)
+        path = get_path(x)
+        isempty(path) && return
+        _follow_include(x, path, s, S)
+    end
+end
 
 
-function follow_include(x, s, S::State{FileSystem})
-    path = get_path(x)
+function _follow_include(x, path, s, S::State{FileSystem})
     path = isabspath(path) ? path : joinpath(dirname(S.loc.path), path)
     !isfile(path) && return
 
-    parent = S.includes[S.loc.path]
-    f = File(path, (parent, S.loc.offset + x.span), [])
-    push!(parent.children, f)
-    S.includes[path] = f
+    # parent = S.includes[S.loc.path]
+    # f = File(path, (parent, S.loc.offset + x.span), [])
+    # push!(parent.children, f)
+    # S.includes[path] = f
 
     x1 = CSTParser.parse(readstring(path), true)
     old_Sloc = S.loc

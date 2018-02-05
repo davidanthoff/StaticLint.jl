@@ -26,10 +26,9 @@ mutable struct Scope
     parent::Union{Void,Scope}
     children::Vector{Scope}
     names::Dict{String,Vector{Binding}}
-    range::UnitRange{Int64}
     loc::Location
 end
-Scope() = Scope("__toplevel__", "", nothing, [], Dict(), 1:typemax(Int), Location("", 1:typemax(Int)))
+Scope() = Scope("__toplevel__", "", nothing, [], Dict(), Location("", 1:typemax(Int)))
 function Base.display(s::Scope, i = 0)
     println(" "^i, s.t, ":[", join(keys(s.names), ", "), "]")
     for c in s.children
@@ -40,27 +39,48 @@ end
 struct MissingBinding
     s::Scope
 end
+
 mutable struct Reference{T}
     x::T
     b::Union{Binding,MissingBinding}
     loc::Location{UnitRange{Int}}
 end
+Base.display(r::Array{Reference}) =foreach(display, r)
+Base.display(r::Reference) = println(CSTParser.str_value(r.x), " @ ", splitdir(r.loc.path)[2],"-", r.loc.offset)
 
+@enum(DiagnosticCode, 
+    BadReference)
+
+struct Diagnostic
+    loc::Location
+    code::DiagnosticCode
+    msg::String
+end
 
 struct FileSystem end
+
 mutable struct State{T}
     current_scope::Scope
     loc::Location
-    target_file::String
+    target::Location
+    in_target::Bool
     bad_refs::Vector{Reference}
     refs::Vector{Reference}
     nodecl::UnitRange{Int}
     isquotenode::Bool
     includes::Dict
     fs::T
+    diagnostics::Vector{Diagnostic}
 end
-State(s) = State{FileSystem}(s, Location("", 0), "", [], [], 0:0, false, Dict(), FileSystem())
+State(s) = State{FileSystem}(s, Location("", 0), Location("", -1), true, [], [], 0:0, false, Dict(), FileSystem(), [])
 State() = State(Scope())
+function Base.display(S::State)
+    display(S.current_scope)
+    println("Loc:    ", S.loc)
+    println("Target: ", S.target)
+    println("Refs:   ", length(S.refs))
+end
+
 
 
 function add_binding(x, name, t, S::State, offset)
@@ -72,7 +92,7 @@ function add_binding(x, name, t, S::State, offset)
 end
 
 function add_scope(a, s, S::State, t, name = "")
-    push!(S.current_scope.children, Scope(t, name, s, [], Dict(), S.loc.offset + a.span, Location(S.loc.path, S.loc.offset + a.span)))
+    push!(S.current_scope.children, Scope(t, name, s, [], Dict(), Location(S.loc.path, S.loc.offset + a.span)))
     S.current_scope = last(S.current_scope.children)
 end
 
@@ -268,18 +288,6 @@ function find_ref(name, s, S::State)
     end
 end
 
-# Build scopes
-
-
-function lint_call(x, s, S) end
-function lint_call(x::CSTParser.EXPR{CSTParser.Call}, s, S)
-    fname = CSTParser.get_name(x)
-    if CSTParser.str_value(fname) == "include"
-        follow_include(x, s, S)
-    end
-
-end
-
 Base.in(x::UnitRange{Int}, y::UnitRange{Int}) = first(x) ≥ first(y) && last(x) ≤ last(y)
 
 function find_bad_refs(S)
@@ -308,5 +316,6 @@ end
 include("trav.jl")
 include("imports.jl")
 include("includes.jl")
+include("ls.jl")
 mod_names(Main, loaded_mods)
 end # module
