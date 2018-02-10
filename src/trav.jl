@@ -1,12 +1,13 @@
 function trav(x::CSTParser.LeafNode, s, S::State)
-    if x isa CSTParser.IDENTIFIER && !S.isquotenode
-        binding = find_ref(CSTParser.str_value(x), S)
+    if S.in_target && x isa CSTParser.IDENTIFIER && !S.isquotenode
+        binding = find_ref(CSTParser.str_value(x), S.current_scope, S)
         push!(S.refs, Reference(x, binding, Location(S.loc.path, S.loc.offset + x.span)))
     end
     S.loc.offset += x.fullspan
 end
 
 function trav(x::CSTParser.EXPR{T}, s, S::State) where T <: Union{CSTParser.MacroName,CSTParser.Quote}
+    # NEEDS FIX: add macro ref
     S.loc.offset += x.fullspan
 end
 
@@ -16,8 +17,8 @@ function trav(x, s, S::State)
         get_external_binding(a, s, S)
         if enter_scope(x, s, S)
             create_scope(a, s, S)
-            lint_call(a, s, S)
             trav(a, S.current_scope, S)
+            follow_include(a, s, S)
             S.current_scope = s
         else
             S.loc.offset += a.fullspan
@@ -35,7 +36,7 @@ function trav(x)
 end
 
 function trav(path::String)
-    S = State{FileSystem}(Scope(), Location(path, 0), "", [], [], 0:0, false, Dict(path => File(path, nothing, [])), FileSystem())
+    S = State{FileSystem}(Scope(), Location(path, 0), Location(path, -1), true, [], [], 0:0, false, Dict(path => File(path, nothing, [])), FileSystem(), [])
     x = CSTParser.parse(readstring(path), true)
     trav(x, S.current_scope, S)
     find_bad_refs(S)
@@ -44,8 +45,8 @@ end
 
 
 function enter_scope(x, s, S)
-    isempty(S.target_file) && return true
-    ns =  CSTParser.defines_function(x) ||
+    isempty(S.target.path) && return true
+    isnewscope =  CSTParser.defines_function(x) ||
     # CSTParser.defines_module(x) ||
     CSTParser.defines_macro(x) ||
     CSTParser.defines_datatype(x) ||
@@ -59,8 +60,8 @@ function enter_scope(x, s, S)
     CSTParser.defines_anon_function(x) ||
     CSTParser.is_assignment(x) && x.arg1 isa CSTParser.EXPR{CSTParser.Curly}
 
-    if ns
-        if S.loc.path == S.target_file
+    if isnewscope
+        if S.loc.path == S.target.path
             return true
         else
             return false

@@ -18,18 +18,18 @@ mutable struct Binding
     t
     loc::Location{UnitRange{Int}}
     val
+    overwrites::Union{Void,Binding}
 end
 
 mutable struct Scope
     t::String
     namespace::String
-    parent::Union{Void,Scope}
+    parent::Union{Void,Scope}   
     children::Vector{Scope}
     names::Dict{String,Vector{Binding}}
-    range::UnitRange{Int64}
     loc::Location
 end
-Scope() = Scope("__toplevel__", "", nothing, [], Dict(), 1:typemax(Int), Location("", 1:typemax(Int)))
+Scope() = Scope("__toplevel__", "", nothing, [], Dict("using" => []), Location("", 1:typemax(Int)))
 function Base.display(s::Scope, i = 0)
     println(" "^i, s.t, ":[", join(keys(s.names), ", "), "]")
     for c in s.children
@@ -40,39 +40,60 @@ end
 struct MissingBinding
     s::Scope
 end
+
 mutable struct Reference{T}
     x::T
     b::Union{Binding,MissingBinding}
     loc::Location{UnitRange{Int}}
 end
+Base.display(r::Array{Reference}) =foreach(display, r)
+Base.display(r::Reference) = println(CSTParser.str_value(r.x), " @ ", splitdir(r.loc.path)[2],"-", r.loc.offset)
 
+@enum(DiagnosticCode, 
+    BadReference)
+
+struct Diagnostic
+    loc::Location
+    code::DiagnosticCode
+    msg::String
+end
 
 struct FileSystem end
+
 mutable struct State{T}
     current_scope::Scope
     loc::Location
-    target_file::String
+    target::Location
+    in_target::Bool
     bad_refs::Vector{Reference}
     refs::Vector{Reference}
     nodecl::UnitRange{Int}
     isquotenode::Bool
     includes::Dict
     fs::T
+    diagnostics::Vector{Diagnostic}
 end
-State(s) = State{FileSystem}(s, Location("", 0), "", [], [], 0:0, false, Dict(), FileSystem())
+State(s) = State{FileSystem}(s, Location("", 0), Location("", -1), true, [], [], 0:0, false, Dict(), FileSystem(), [])
 State() = State(Scope())
+function Base.display(S::State)
+    display(S.current_scope)
+    println("Loc:    ", S.loc)
+    println("Target: ", S.target)
+    println("Refs:   ", length(S.refs))
+end
+
 
 
 function add_binding(x, name, t, S::State, offset)
     if haskey(S.current_scope.names, name)
-        push!(S.current_scope.names[name], Binding(t, Location(S.loc.path, offset), x))
+        push!(S.current_scope.names[name], Binding(t, Location(S.loc.path, offset), x, last(S.current_scope.names[name])))
     else
-        S.current_scope.names[name] = Binding[Binding(t, Location(S.loc.path, offset), x)]
+        S.current_scope.names[name] = Binding[Binding(t, Location(S.loc.path, offset), x, nothing)]
     end
 end
 
 function add_scope(a, s, S::State, t, name = "")
-    push!(S.current_scope.children, Scope(t, name, s, [], Dict(), S.loc.offset + a.span, Location(S.loc.path, S.loc.offset + a.span)))
+    push!(S.current_scope.children, Scope(t, name, s, [], Dict(), Location(S.loc.path, S.loc.offset + a.span)))
     S.current_scope = last(S.current_scope.children)
 end
 
@@ -80,6 +101,7 @@ end
 function create_scope(x, s, S::State)
     if CSTParser.defines_module(x)
         add_scope(x, s, S, "Module", CSTParser.str_value(CSTParser.get_name(x)))
+        S.current_scope.names["using"] = []
     elseif CSTParser.defines_function(x)
         add_scope(x, s, S, "Function")
         sig = CSTParser.get_sig(x)
@@ -180,7 +202,7 @@ function get_external_binding(x, s, S::State)
         name = CSTParser.str_value(CSTParser.get_name(x))
         s1 = find_higher_func_decl(name, s)
         if haskey(s1.names, name) && last(s1.names[name]).t == :Function
-            push!(s1.names[name], Binding(:Function, Location(S.loc.path, S.loc.offset + x.span), x))
+            push!(s1.names[name], Binding(:Function, Location(S.loc.path, S.loc.offset + x.span), x, last(s1.names[name])))
         else
             add_binding(x, name, :Function, S, S.loc.offset + x.span)
         end
@@ -250,34 +272,18 @@ function find_higher_func_decl(name, s)
     return s
 end
 
-function find_ref(name, S::State)
-    if Symbol(name) in BaseCoreNames
-        return Binding("BaseCore", Location("____", 0:0), nothing)
-    else
-        return find_ref(name, S.current_scope, S)
-    end
-end
-
 function find_ref(name, s, S::State)
     if name in keys(s.names)
         return last(s.names[name])
-    elseif s.parent != nothing
+    elseif s.parent != nothing && s.parent.t != "Module"
         return find_ref(name, s.parent, S)
+    elseif Symbol(name) in SymbolServer.server["Base"].exported
+        return Binding("Base", Location("____", 0:0), nothing, nothing)
+    elseif Symbol(name) in SymbolServer.server["Core"].exported
+        return Binding("Core", Location("____", 0:0), nothing, nothing)
     else
         return MissingBinding(S.current_scope)
     end
-end
-
-# Build scopes
-
-
-function lint_call(x, s, S) end
-function lint_call(x::CSTParser.EXPR{CSTParser.Call}, s, S)
-    fname = CSTParser.get_name(x)
-    if CSTParser.str_value(fname) == "include"
-        follow_include(x, s, S)
-    end
-
 end
 
 Base.in(x::UnitRange{Int}, y::UnitRange{Int}) = first(x) ≥ first(y) && last(x) ≤ last(y)
@@ -308,5 +314,7 @@ end
 include("trav.jl")
 include("imports.jl")
 include("includes.jl")
+include("symbolserver.jl")
+SymbolServer.init()
 mod_names(Main, loaded_mods)
 end # module

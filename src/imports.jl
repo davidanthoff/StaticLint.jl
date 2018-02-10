@@ -55,31 +55,67 @@ function get_imports(x::CSTParser.EXPR{T}, S) where T <: Union{CSTParser.Using,C
     u = T == CSTParser.Using
     vars = unwrap_imports(x)
     for v in vars
-        if u && string(v[1]) in keys(S.current_scope.names) && S.current_scope.names[string(v[1])][end].t == :Module
-            mx = S.current_scope.names[string(v[1])][end].val.args[3].args
-            for a in mx
-                if a isa CSTParser.EXPR{CSTParser.Export}
-                    for i = 2:length(a.args)
-                        if a.args[i] isa CSTParser.IDENTIFIER
-                            add_binding(x, CSTParser.str_value(a.args[i]), :Any, S::State, S.loc.offset + x.span)
+        rootmod = string(v[1])
+        if rootmod in keys(S.current_scope.names) && S.current_scope.names[rootmod][end].t == :Module # is user defined module
+            if length(v) == 1 
+                if u # simple case
+                    mx = S.current_scope.names[string(v[1])][end].val.args[3].args
+                    for a in mx
+                        if a isa CSTParser.EXPR{CSTParser.Export}
+                            for i = 2:length(a.args)
+                                if a.args[i] isa CSTParser.IDENTIFIER
+                                    add_binding(x, CSTParser.str_value(a.args[i]), :Any, S::State, S.loc.offset + x.span)
+                                end
+                            end
                         end
                     end
+                else
+                    add_binding(x, rootmod, :Any, S::State, S.loc.offset + x.span)
                 end
             end
-        elseif join(v, ".") in keys(loaded_mods)
-            add_binding(x, string(v[end]), :Any, S::State, S.loc.offset + x.span)
-            if u
-                for n in loaded_mods[join(v, ".")][1]
-                    add_binding(x, string(n), :Any, S::State, S.loc.offset + x.span)
+        elseif rootmod in keys(SymbolServer.server) # is available external module
+            if !SymbolServer.server[rootmod].is_loaded && !SymbolServer.server[rootmod].load_failed # load root module if not loaded and hasn't failed already
+                SymbolServer.load_module(rootmod)
+            end
+            if !SymbolServer.server[rootmod].is_loaded # if load failed get out of here
+                return 
+            end
+            if length(v) == 1
+                if u
+                    for n in SymbolServer.server[rootmod].exported
+                        add_binding(x, string(n), :Any, S::State, S.loc.offset + x.span)
+                    end
+                else
+                    add_binding(x, rootmod, :Any, S::State, S.loc.offset + x.span)
                 end
             end
-        elseif length(v) > 1 && join(v[1:length(v)-1], ".") in keys(loaded_mods)
-            if v[end] in loaded_mods[join(view(v,1:length(v)-1), ".")][2]
-                add_binding(x, string(v[end]), :Any, S::State, S.loc.offset + x.span)
-            end
-        elseif is_pkg_available(v[1], S)
-            load_pkg(v[1], S)
         end
+        # user defined mod
+        # if u && string(v[1]) in keys(S.current_scope.names) && S.current_scope.names[string(v[1])][end].t == :Module
+        #     mx = S.current_scope.names[string(v[1])][end].val.args[3].args
+        #     for a in mx
+        #         if a isa CSTParser.EXPR{CSTParser.Export}
+        #             for i = 2:length(a.args)
+        #                 if a.args[i] isa CSTParser.IDENTIFIER
+        #                     add_binding(x, CSTParser.str_value(a.args[i]), :Any, S::State, S.loc.offset + x.span)
+        #                 end
+        #             end
+        #         end
+        #     end
+        # elseif join(v, ".") in keys(loaded_mods)
+        #     add_binding(x, string(v[end]), :Any, S::State, S.loc.offset + x.span)
+        #     if u
+        #         for n in loaded_mods[join(v, ".")][1]
+        #             add_binding(x, string(n), :Any, S::State, S.loc.offset + x.span)
+        #         end
+        #     end
+        # elseif length(v) > 1 && join(v[1:length(v)-1], ".") in keys(loaded_mods)
+        #     if v[end] in loaded_mods[join(view(v,1:length(v)-1), ".")][2]
+        #         add_binding(x, string(v[end]), :Any, S::State, S.loc.offset + x.span)
+        #     end
+        # elseif is_pkg_available(v[1], S)
+        #     load_pkg(v[1], S)
+        # end
     end
 end
 
