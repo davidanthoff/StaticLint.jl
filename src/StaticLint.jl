@@ -278,9 +278,13 @@ function find_ref(name, s, S::State)
     elseif s.parent != nothing && s.parent.t != "Module"
         return find_ref(name, s.parent, S)
     elseif Symbol(name) in SymbolServer.server["Base"].exported
-        return Binding("Base", Location("____", 0:0), nothing, nothing)
+        val = getfield(Base, Symbol(name))
+        t = val isa Function ? "Function" : string(typeof(val))
+        return Binding(t, Location("____", 0:0), val, nothing)
     elseif Symbol(name) in SymbolServer.server["Core"].exported
-        return Binding("Core", Location("____", 0:0), nothing, nothing)
+        val = getfield(Core, Symbol(name))
+        t = val isa Function ? "Function" : string(typeof(val))
+        return Binding(t, Location("____", 0:0), val, nothing)
     else
         return MissingBinding(S.current_scope)
     end

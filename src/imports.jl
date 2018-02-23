@@ -70,7 +70,7 @@ function get_imports(x::CSTParser.EXPR{T}, S) where T <: Union{CSTParser.Using,C
                         end
                     end
                 else
-                    add_binding(x, rootmod, :Any, S::State, S.loc.offset + x.span)
+                    add_binding(x, rootmod, :Module, S::State, S.loc.offset + x.span)
                 end
             end
         elseif rootmod in keys(SymbolServer.server) # is available external module
@@ -83,10 +83,20 @@ function get_imports(x::CSTParser.EXPR{T}, S) where T <: Union{CSTParser.Using,C
             if length(v) == 1
                 if u
                     for n in SymbolServer.server[rootmod].exported
-                        add_binding(x, string(n), :Any, S::State, S.loc.offset + x.span)
+                        val = getfield(getfield(Main, Symbol(rootmod)), n)
+                        add_binding(val, string(n), :Any, S, S.loc.offset + x.span)
                     end
                 else
-                    add_binding(x, rootmod, :Any, S::State, S.loc.offset + x.span)
+                    add_binding(x, rootmod, :Module, S, S.loc.offset + x.span)
+                end
+            elseif join(v[1:end-1], ".") in keys(SymbolServer.server)
+                if Symbol(v[end]) in SymbolServer.server[join(v[1:end-1], ".")].internal
+                    val = Main
+                    for f in v
+                        val = getfield(val, Symbol(f))
+                    end
+                    t = val isa Function ? "Function" : string(typeof(val))
+                    add_binding(val, string(v[end]), t, S, S.loc.offset + x.span)
                 end
             end
         end

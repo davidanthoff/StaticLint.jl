@@ -53,7 +53,7 @@ function load_module(m::Module, load = false)
     if haskey(server, mname) && server[mname].is_loaded
         return
     end
-
+    
     server[mname] = ModuleBinding(Set(names(m)), Set(names(m, true, true)), Dict(), true, false)
     for i in server[mname].internal
         !isdefined(m, i) && continue
@@ -85,7 +85,13 @@ end
 #     end
 # end
 
-function load_binding()
+function get_module(m::String)
+end
+
+function load_binding(m::String, b::String)
+    if haskey(server, m)
+
+    end
 end
 
 # function load_function(f::Function)
@@ -123,14 +129,14 @@ end
 #     end
 # end
 
-
-const installed_packages = filter(p->isdir(joinpath(Pkg.dir(),p)) && p!="METADATA" && !startswith(p,"."), readdir(Pkg.dir()))
+const pkgdir = Pkg.dir()
+pkgdir = "c:/Users/zacnu/.julia/v0.6"
+const installed_packages = filter(p->isdir(joinpath(pkgdir,p)) && p!="METADATA" && !startswith(p,"."), readdir(pkgdir))
 const server = Dict{String,ModuleBinding}()
 
 function init()
     load_module(Base)
-    load_module(Core)
-    pkgdir = Pkg.dir()
+    load_module(Core)    
     for pkg in installed_packages
         if isfile(joinpath(pkgdir, pkg, "src", join([pkg, ".jl"])))
             server[pkg] = ModuleBinding(Set{String}(), Set{String}(), Dict(), false, false)
